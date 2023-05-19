@@ -1,56 +1,22 @@
 version: 2.1
 
 executors:
-  my-executor:
+  my_executor:
     docker:
       - image: circleci/node # deprecated
       # See https://circleci.com/docs/ja/2.0/next-gen-migration-guide/
 
-orbs:
-  # See https://circleci.com/developer/ja/orbs/orb/circleci/aws-cli
-  aws-cli: circleci/aws-cli@3.1.5 # Import Orb:aws-cli 
-
 jobs:
-  deploy:
-    executor: my-executor
+  get_token:
+    executor: my_executor
     steps:
       - checkout
-      - setup_remote_docker
-      - aws-cli/setup:
-          role-arn: ${AWS_ROLE_ARN}
-          profile-name: "OIDC-PROFILE"
-          role-session-name: "example-session"
-      - run: |
-            set -x
-            ./.circleci/assume-role-with-oidc.sh ${AWS_ROLE_ARN} ${CIRCLE_OIDC_TOKEN}
-      - run: 
-          name: Log-into-AWS-ECR
-          command: |
-            # must use same profile specified in the step above
-            aws ecr get-login-password --profile "OIDC-PROFILE" | docker login --username AWS --password-stdin ${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_DEFAULT_REGION}.amazonaws.com
       - run:
-          name: docker build&tag
-          command: | 
-            docker build --build-arg CMTID=`git rev-parse HEAD` -f Dockerfile -t django-app .
-            docker tag django-app:latest ${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_DEFAULT_REGION}.amazonaws.com/django-app:latest
-            docker tag django-app:latest ${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_DEFAULT_REGION}.amazonaws.com/django-app:`git rev-parse HEAD`
-      - run:
-          name: docker push to ecr
-          command: | 
-            docker push ${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_DEFAULT_REGION}.amazonaws.com/django-app:latest
-            docker push ${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_DEFAULT_REGION}.amazonaws.com/django-app:`git rev-parse HEAD`
-      - run:
-          name: ecs force deploy
-          command: | 
-            aws ecs update-service --cluster ${ECS_CLUSTER_NAME} --service django-app --force-new-deployment > /dev/null
-      - run:
-          name: APM Deployment Marker
-          command: | 
-            curl -X 'POST' 'https://api.newrelic.com/v2/applications/'${NR_APM_APP_ID}'/deployments.json' -H 'accept: application/json' -H 'X-Api-Key: '${NR_API_KEY_USER}  -H 'Content-Type: application/json' -d '{ "deployment": { "changelog": "hoge", "description": "furga", "revision": "string", "user": "devlynden@gmail.com"}}'
-      
+          echo ${CIRCLE_OIDC_TOKEN:1}; # OIDC Tokenを取得
+
 workflows:
-  version: 2.1
+  version: 2
   release:
     jobs:
-      - deploy:
+      - get_token:
           context: django
