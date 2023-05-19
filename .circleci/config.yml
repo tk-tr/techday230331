@@ -16,7 +16,7 @@ jobs:
     steps:
       - checkout
       setup_remote_docker
-      aws0cli/install
+      aws-cli/install
       - run: |
             set -x
             ./.circleci/assume-role-with-oidc.sh ${AWS_ROLE_ARN} ${CIRCLE_OIDC_TOKEN}
