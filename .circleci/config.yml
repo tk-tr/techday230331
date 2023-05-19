@@ -29,17 +29,17 @@ jobs:
           name: docker build&tag
           command: | 
             docker build --build-arg CMTID=`git rev-parse HEAD` -f Dockerfile -t django-app .
-            docker tag django-app:latest ${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_DEFAULT_REGION}.amazonaws.com/django-app:latest
-            docker tag django-app:latest ${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_DEFAULT_REGION}.amazonaws.com/django-app:`git rev-parse HEAD`
+            docker tag django-app:latest ${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_DEFAULT_REGION}.amazonaws.com/django:latest
+            docker tag django-app:latest ${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_DEFAULT_REGION}.amazonaws.com/django:`git rev-parse HEAD`
       - run:
           name: docker push to ecr
           command: | 
-            docker push ${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_DEFAULT_REGION}.amazonaws.com/django-app:latest
-            docker push ${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_DEFAULT_REGION}.amazonaws.com/django-app:`git rev-parse HEAD`
+            docker push ${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_DEFAULT_REGION}.amazonaws.com/django:latest
+            docker push ${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_DEFAULT_REGION}.amazonaws.com/django:`git rev-parse HEAD`
       - run:
           name: ecs force deploy
           command: | 
-            aws ecs update-service --cluster ${ECS_CLUSTER_NAME} --service django-app --force-new-deployment > /dev/null
+            aws ecs update-service --cluster ${ECS_CLUSTER_NAME} --service django --force-new-deployment > /dev/null
       - run:
           name: APM Deployment Marker
           command: | 
