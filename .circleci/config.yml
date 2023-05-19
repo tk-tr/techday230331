@@ -15,11 +15,6 @@ jobs:
     executor: my-executor
     steps:
       - checkout
-      - setup_remote_docker
-      - aws-cli/setup:
-          role-arn: ${AWS_ROLE_ARN}
-          profile-name: "OIDC-PROFILE"
-          role-session-name: "example-session"
       - run: |
             set -x
             ./.circleci/assume-role-with-oidc.sh ${AWS_ROLE_ARN} ${CIRCLE_OIDC_TOKEN}
