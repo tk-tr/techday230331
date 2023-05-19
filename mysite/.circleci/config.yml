@@ -1,66 +1,56 @@
-
 version: 2.1
+
+executors:
+  my-executor:
+    docker:
+      - image: circleci/node # deprecated
+      # See https://circleci.com/docs/ja/2.0/next-gen-migration-guide/
+
 orbs:
- aws-cli: circleci/aws-cli@2.1.0
+  # See https://circleci.com/developer/ja/orbs/orb/circleci/aws-cli
+  aws-cli: circleci/aws-cli@3.1.5 # Import Orb:aws-cli 
 
 jobs:
- build:
-   working_directory: ~/app
-   docker:
-     - image: cimg/python:3.9
-   steps:
-     - checkout
-     - setup_remote_docker
-     - aws-cli/install
-     - aws-cli/setup
-     - run:
-         name: aws ecr login for docker pull/push
-         command: |
-           aws ecr get-login-password --region ${AWS_DEFAULT_REGION} | docker login --username AWS --password-stdin ${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_DEFAULT_REGION}.amazonaws.com
-     - run:
-         name: docker build&tag
-         command: |
-           docker build --build-arg CMTID=`git rev-parse HEAD` -f Dockerfile -t django-app .
-           docker tag django-app:latest ${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_DEFAULT_REGION}.amazonaws.com/django-app:latest
-           docker tag django-app:latest ${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_DEFAULT_REGION}.amazonaws.com/django-app:`git rev-parse HEAD`
-     - run:
-         name: docker push to ecr
-         command: |
-           docker push ${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_DEFAULT_REGION}.amazonaws.com/django-app:latest
-           docker push ${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_DEFAULT_REGION}.amazonaws.com/django-app:`git rev-parse HEAD`
-     - run:
-         name: ecs force deploy
-         command: |
-           aws ecs update-service --cluster AppGroupCluster --service django-app --force-new-deployment > /dev/null
-     - run:
-         name: APM Deployment Marker
-         command: |
-           curl -X 'POST' 'https://api.newrelic.com/v2/applications/${APM_APP_ID}/deployments.json' -H 'accept: application/json' -H 'X-Api-Key: ${nr_api_key_u}'  -H 'Content-Type: application/json' -d '{ "deployment": { "changelog": "hoge", "description": "furga", "revision": "string", "user": "devlynden@gmail.com"}}'
+  deploy:
+    executor: my-executor
+    steps:
+      - checkout
+      - setup_remote_docker
+      - aws-cli/setup:
+          role-arn: ${AWS_ROLE_ARN}
+          profile-name: "OIDC-PROFILE"
+          role-session-name: "example-session"
+      - run: |
+            set -x
+            ./.circleci/assume-role-with-oidc.sh ${AWS_ROLE_ARN} ${CIRCLE_OIDC_TOKEN}
+      - run: 
+          name: Log-into-AWS-ECR
+          command: |
+            # must use same profile specified in the step above
+            aws ecr get-login-password --profile "OIDC-PROFILE" | docker login --username AWS --password-stdin ${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_DEFAULT_REGION}.amazonaws.com
+      - run:
+          name: docker build&tag
+          command: | 
+            docker build --build-arg CMTID=`git rev-parse HEAD` -f Dockerfile -t django-app .
+            docker tag django-app:latest ${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_DEFAULT_REGION}.amazonaws.com/django-app:latest
+            docker tag django-app:latest ${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_DEFAULT_REGION}.amazonaws.com/django-app:`git rev-parse HEAD`
+      - run:
+          name: docker push to ecr
+          command: | 
+            docker push ${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_DEFAULT_REGION}.amazonaws.com/django-app:latest
+            docker push ${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_DEFAULT_REGION}.amazonaws.com/django-app:`git rev-parse HEAD`
+      - run:
+          name: ecs force deploy
+          command: | 
+            aws ecs update-service --cluster ${ECS_CLUSTER_NAME} --service django-app --force-new-deployment > /dev/null
+      - run:
+          name: APM Deployment Marker
+          command: | 
+            curl -X 'POST' 'https://api.newrelic.com/v2/applications/'${NR_APM_APP_ID}'/deployments.json' -H 'accept: application/json' -H 'X-Api-Key: '${NR_API_KEY_USER}  -H 'Content-Type: application/json' -d '{ "deployment": { "changelog": "hoge", "description": "furga", "revision": "string", "user": "devlynden@gmail.com"}}'
+      
 workflows:
- version: 2.1
- build_and_deploy:
-   jobs:
-     - build:
-         context:
-           - DjangoAPP
-         filters:
-            branches:
-               only:
-                - main
-
-
-
-Dockerfileをレポジトリのルート直下に以下の内容を作成
-
-
-FROM <ECR上のイメージのURL>
-
-WORKDIR /var/www/
-COPY ./mysite ./mysite
-COPY ./newrelic.ini ./
-
-ARG CMTID
-ENV NRCMT=${CMTID}
-
-CMD NEW_RELIC_METADATA_COMMIT=${NRCMT} NEW_RELIC_CONFIG_FILE=newrelic.ini newrelic-admin run-program  python3 mysite/manage.py runserver 0.0.0.0:8000
-
+  version: 2.1
+  release:
+    jobs:
+      - deploy:
+          context: django
