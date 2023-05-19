@@ -1,47 +1,56 @@
-# Use the latest 2.1 version of CircleCI pipeline process engine.
-# See: https://circleci.com/docs/2.0/configuration-reference
 version: 2.1
 
-# Orbs are reusable packages of CircleCI configuration that you may share across projects, enabling you to create encapsulated, parameterized commands, jobs, and executors that can be used across multiple projects.
-# See: https://circleci.com/docs/2.0/orb-intro/
-orbs:
-  # The python orb contains a set of prepackaged CircleCI configuration you can use repeatedly in your configuration files
-  # Orb commands and jobs help you with common scripting around a language/tool
-  # so you dont have to copy and paste it everywhere.
-  # See the orb documentation here: https://circleci.com/developer/orbs/orb/circleci/python
-  python: circleci/python@1.5.0
-
-# Define a job to be invoked later in a workflow.
-# See: https://circleci.com/docs/2.0/configuration-reference/#jobs
-jobs:
-  build-and-test: # This is the name of the job, feel free to change it to better match what you're trying to do!
-    # These next lines defines a Docker executors: https://circleci.com/docs/2.0/executor-types/
-    # You can specify an image from Dockerhub or use one of the convenience images from CircleCI's Developer Hub
-    # A list of available CircleCI Docker convenience images are available here: https://circleci.com/developer/images/image/cimg/python
-    # The executor is the environment in which the steps below will be executed - below will use a python 3.10.2 container
-    # Change the version below to your required version of python
+executors:
+  my-executor:
     docker:
-      - image: cimg/python:3.10.2
-    # Checkout the code as the first step. This is a dedicated CircleCI step.
-    # The python orb's install-packages step will install the dependencies from a Pipfile via Pipenv by default.
-    # Here we're making sure we use just use the system-wide pip. By default it uses the project root's requirements.txt.
-    # Then run your tests!
-    # CircleCI will report the results back to your VCS provider.
+      - image: circleci/node # deprecated
+      # See https://circleci.com/docs/ja/2.0/next-gen-migration-guide/
+
+orbs:
+  # See https://circleci.com/developer/ja/orbs/orb/circleci/aws-cli
+  aws-cli: circleci/aws-cli@3.1.5 # Import Orb:aws-cli 
+
+jobs:
+  deploy:
+    executor: my-executor
     steps:
       - checkout
-      - python/install-packages:
-          pkg-manager: pip
-          # app-dir: ~/project/package-directory/  # If you're requirements.txt isn't in the root directory.
-          # pip-dependency-file: test-requirements.txt  # if you have a different name for your requirements file, maybe one that combines your runtime and test requirements.
+      - setup_remote_docker
+      - aws-cli/setup:
+          role-arn: ${AWS_ROLE_ARN}
+          profile-name: "OIDC-PROFILE"
+          role-session-name: "example-session"
+      - run: |
+            set -x
+            ./.circleci/assume-role-with-oidc.sh ${AWS_ROLE_ARN} ${CIRCLE_OIDC_TOKEN}
+      - run: 
+          name: Log-into-AWS-ECR
+          command: |
+            # must use same profile specified in the step above
+            aws ecr get-login-password --profile "OIDC-PROFILE" | docker login --username AWS --password-stdin ${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_DEFAULT_REGION}.amazonaws.com
       - run:
-          name: Run tests
-          # This assumes pytest is installed via the install-package step above
-          command: pytest
-
-# Invoke jobs via workflows
-# See: https://circleci.com/docs/2.0/configuration-reference/#workflows
+          name: docker build&tag
+          command: | 
+            docker build --build-arg CMTID=`git rev-parse HEAD` -f Dockerfile -t django-app .
+            docker tag django-app:latest ${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_DEFAULT_REGION}.amazonaws.com/django-app:latest
+            docker tag django-app:latest ${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_DEFAULT_REGION}.amazonaws.com/django-app:`git rev-parse HEAD`
+      - run:
+          name: docker push to ecr
+          command: | 
+            docker push ${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_DEFAULT_REGION}.amazonaws.com/django-app:latest
+            docker push ${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_DEFAULT_REGION}.amazonaws.com/django-app:`git rev-parse HEAD`
+      - run:
+          name: ecs force deploy
+          command: | 
+            aws ecs update-service --cluster ${ECS_CLUSTER_NAME} --service django-app --force-new-deployment > /dev/null
+      - run:
+          name: APM Deployment Marker
+          command: | 
+            curl -X 'POST' 'https://api.newrelic.com/v2/applications/'${NR_APM_APP_ID}'/deployments.json' -H 'accept: application/json' -H 'X-Api-Key: '${NR_API_KEY_USER}  -H 'Content-Type: application/json' -d '{ "deployment": { "changelog": "hoge", "description": "furga", "revision": "string", "user": "devlynden@gmail.com"}}'
+      
 workflows:
-  sample: # This is the name of the workflow, feel free to change it to better match your workflow.
-    # Inside the workflow, you define the jobs you want to run.
+  version: 2.1
+  release:
     jobs:
-      - build-and-test
+      - deploy:
+          context: django
